@@ -53,7 +53,7 @@ module Shenzhen::Plugins
           yield env[:status], env[:body] if block_given?
         end
 
-        if app_response.status !== 200
+        if app_response.status != 200
           say_error "Error getting upload cert: #{response.body[:error]}"
           return
         end
