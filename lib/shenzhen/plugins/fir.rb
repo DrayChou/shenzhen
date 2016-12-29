@@ -42,23 +42,29 @@ module Shenzhen::Plugins
         say_error "Timed out while geting app info." and abort
       end
 
-      def upload_build(ipa, options)
+      def get_upload_cert(bundle_id)
         options = {
           :type => 'ios',
-          :bundle_id => options['bundle_id'],
+          :bundle_id => bundle_id,
           :api_token => @user_token,
         }
 
-        @connection.post("/apps/", options) do |env|
+        @connection.post("/apps", options) do |env|
           yield env[:status], env[:body] if block_given?
         end
+      rescue Faraday::Error::TimeoutError
+        say_error "Timed out while geting app info." and abort
+      end
 
-        if app_response.status != 200
-          say_error "Error getting upload cert: #{response.body[:error]}"
+      def upload_build(ipa, options)
+
+        cert_response = get_upload_cert(options['bundle_id'])
+        if cert_response.status != 200
+          say_error "Error getting upload cert: #{cert_response.body[:error]}"
           return
         end
 
-        cert = app_response.body['cert']
+        cert = cert_response.body['cert']
 
         connection = Faraday.new(:url => cert['binary']['upload_url'], :request => { :timeout => 360 }) do |builder|
           builder.request :multipart
