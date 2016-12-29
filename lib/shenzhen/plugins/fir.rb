@@ -126,7 +126,7 @@ command :'distribute:fir' do |c|
       end
 
     else
-      say_error "Error getting app information: #{response.body[:error]}"
+      say_error "Error getting app information: #{app_response.body[:error]}"
     end
   end
 
