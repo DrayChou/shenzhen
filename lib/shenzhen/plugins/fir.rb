@@ -6,8 +6,7 @@ require 'faraday_middleware'
 module Shenzhen::Plugins
   module Fir
     class Client
-      HOSTNAME = 'fir.im'
-      VERSION = 'v2'
+      HOSTNAME = 'api.fir.im'
 
       def initialize(user_token)
         @user_token = user_token
@@ -22,11 +21,10 @@ module Shenzhen::Plugins
 
       def get_app_info(app_id)
         options = {
-          :type => 'ios',
-          :token => @user_token,
+          :api_token => @user_token,
         }
 
-        @connection.get("/api/#{VERSION}/app/info/#{app_id}", options) do |env|
+        @connection.get("/apps/#{app_id}", options) do |env|
           yield env[:status], env[:body] if block_given?
         end
       rescue Faraday::Error::TimeoutError
@@ -34,7 +32,10 @@ module Shenzhen::Plugins
       end
 
       def update_app_info(app_id, options)
-        @connection.put("/api/#{VERSION}/app/#{app_id}?token=#{@user_token}", options) do |env|
+        options['id'] = app_id
+        options['api_token'] = @user_token
+
+        @connection.put("/apps/#{app_id}", options) do |env|
           yield env[:status], env[:body] if block_given?
         end
       rescue Faraday::Error::TimeoutError
@@ -42,7 +43,24 @@ module Shenzhen::Plugins
       end
 
       def upload_build(ipa, options)
-        connection = Faraday.new(:url => options['url'], :request => { :timeout => 360 }) do |builder|
+        options = {
+          :type => 'ios',
+          :bundle_id => options['bundle_id'],
+          :api_token => @user_token,
+        }
+
+        @connection.post("/apps/", options) do |env|
+          yield env[:status], env[:body] if block_given?
+        end
+
+        if app_response.status !== 200
+          say_error "Error getting upload cert: #{response.body[:error]}"
+          return
+        end
+
+        cert = app_response.body['cert']
+
+        connection = Faraday.new(:url => cert['binary']['upload_url'], :request => { :timeout => 360 }) do |builder|
           builder.request :multipart
           builder.response :json
           builder.use FaradayMiddleware::FollowRedirects
@@ -50,8 +68,8 @@ module Shenzhen::Plugins
         end
 
         options = {
-          :key => options['key'],
-          :token => options['token'],
+          :key => cert['binary']['key'],
+          :token => cert['binary']['token'],
           :file => Faraday::UploadIO.new(ipa, 'application/octet-stream')
         }
 
@@ -98,28 +116,15 @@ command :'distribute:fir' do |c|
     client = Shenzhen::Plugins::Fir::Client.new(@user_token)
     app_response = client.get_app_info(@app_id)
     if app_response.status == 200
-      upload_response = client.upload_build(@file, app_response.body['bundle']['pkg'])
+      app_short_uri = app_response.body['short']
+      upload_response = client.upload_build(@file, app_response.body)
 
       if upload_response.status == 200
-        oid = upload_response.body['appOid']
-        today = Time.now.strftime('%Y-%m-%d %H:%M:%S')
-        @notes ||= "Upload on #{today}"
-
-        app_response = client.update_app_info(oid, {
-          :changelog => @notes,
-          :version => @app_version,
-          :versionShort => @short_version
-        })
-
-        if app_response.status == 200
-          app_short_uri = app_response.body['short']
-          say_ok "Build successfully uploaded to Fir, visit url: http://fir.im/#{app_short_uri}"
-        else
-          say_error "Error updating build information: #{app_response.body[:error]}" and abort
-        end
+        say_ok "Build successfully uploaded to Fir, visit url: http://fir.im/#{app_short_uri}"
       else
         say_error "Error uploading to Fir: #{upload_response.body[:error]}" and abort
       end
+
     else
       say_error "Error getting app information: #{response.body[:error]}"
     end
